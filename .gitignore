@@ -1,0 +1,6 @@
+target
+benches/wasm/node_modules
+benches/wasm/package-lock.json
+benches/wasm/bun.lock
+benches/wasm/browser/bundle.js
+benches/wasm/browser/wasm_lib.wasm

@@ -1,0 +1,67 @@
+[package]
+name = "tape-sha256"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+license = "Apache-2.0"
+description = "Pure-Rust, SIMD-accelerated multi-buffer SHA-256 for hashing many independent messages at once"
+repository = "https://github.com/spool-labs/tape-sha256"
+readme = "README.md"
+keywords = ["sha256", "simd", "multi-buffer", "batch", "hash"]
+categories = ["algorithms", "cryptography"]
+
+autobenches = false
+
+[lib]
+bench = false
+
+[features]
+default = []
+scalar = []
+avx2 = []
+avx512 = []
+neon = []
+
+# Benchmark-only: links a Firedancer build so its batch SHA-256 can be
+# measured side by side. Requires FD_LIB_DIR.
+firedancer-bench = []
+
+# Adds the Firedancer AVX-512 row.
+firedancer-bench-avx512 = ["firedancer-bench"]
+
+[profile.test]
+opt-level = 1
+
+[dependencies]
+
+[dev-dependencies]
+# Independent reference implementation for the differential-correctness gate
+# (tests/differential.rs).
+sha2 = "0.10"
+
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+rand = "0.8"
+ed25519-dalek = "2"
+
+
+# The JS-callable wasm module for benches/wasm/. A cdylib so it exports plain
+# C symbols over linear memory; no main.
+[[example]]
+name = "wasm_lib"
+crate-type = ["cdylib"]
+
+[[bench]]
+name = "blob_group"
+harness = false
+
+[[bench]]
+name = "merkle_leaves"
+harness = false
+
+[[bench]]
+name = "merkle_nodes"
+harness = false
+
+[[bench]]
+name = "shred_verify"
+harness = false

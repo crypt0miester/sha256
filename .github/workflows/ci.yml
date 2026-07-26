@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        # x86-64 (exercises avx2/shani where the runner has them) and
+        # Apple ARM (neon + crypto extensions). A kernel only executes where
+        # its instructions exist, so both vendors must run the suite.
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - run: cargo test --release
+      - run: cargo test --release --features scalar
+      # Benches and tests must build under every feature set even where they
+      # are not run; `--features scalar` once failed only here.
+      - run: cargo check --all-targets
+      - run: cargo check --all-targets --features scalar
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo fmt --check
+
+  wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - run: cargo check --target wasm32-unknown-unknown
+      - name: build the simd128 module
+        run: RUSTFLAGS="-C target-feature=+simd128" cargo build --release --example wasm_lib --target wasm32-unknown-unknown
+      - name: differential gate against node:crypto
+        run: node benches/wasm/check.mjs
+
+  # Keeps `rust-version` in Cargo.toml honest: the other jobs run stable, so
+  # nothing there would notice the crate drifting past its declared floor.
+  # Bump this pin and Cargo.toml together.
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89.0
+      # The lib only. Dev-dependencies set their own floors, and the promise
+      # is about consuming this crate, not about building its test suite.
+      - run: cargo check --lib
+      - run: cargo check --lib --features scalar

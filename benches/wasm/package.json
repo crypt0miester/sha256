@@ -1,0 +1,11 @@
+{
+  "name": "tape-sha256-wasm-bench",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@noble/hashes": "^1.5.0",
+    "@solana/addresses": "^7.0.0",
+    "@solana/web3.js": "^1.98.4",
+    "hash-wasm": "^4.11.0"
+  }
+}
