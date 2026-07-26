@@ -96,7 +96,7 @@ impl<'a> Message<'a> {
         let start = k * BLOCK;
         let len = self.len();
         let plen = self.prefix.len();
-        
+
         out.fill(0);
 
         if start < plen {
@@ -193,7 +193,7 @@ pub(crate) fn stage_prefix_block(
         return false;
     }
     let bn = BLOCK - plen;
-    
+
     if !msgs.iter().all(|m| m.body.len() >= bn) {
         return false;
     }

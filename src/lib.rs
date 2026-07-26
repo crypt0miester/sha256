@@ -535,15 +535,15 @@ mod dispatch {
                         // does, and each arm here is a measurement. Zen 5 runs
                         // the 2x16 interlace (12.7 vs 14.6 us single-wave on
                         // EPYC 9B45): its native 512-bit datapath leaves
-                        // dependency stalls the second wave fills. 
-                        // 
+                        // dependency stalls the second wave fills.
+                        //
                         // Zen 4 double-pumps 512-bit ops, so the interlace measured
                         // exactly neutral there (23.69 vs 23.72 on EPYC 9B14)
                         // and the SHA-NI streams beat every 16-lane kernel
-                        // instead (21.05). 
-                        // 
-                        // Intel keeps the single wave for a different reason: 
-                        // the interlace wins the cycles (998 vs 1053 per block 
+                        // instead (21.05).
+                        //
+                        // Intel keeps the single wave for a different reason:
+                        // the interlace wins the cycles (998 vs 1053 per block
                         // step on Emerald Rapids, 1004 vs 1048 on Granite Rapids)
                         // and loses the clock, since doubling 512-bit density
                         // costs 7 to 11% of frequency.
