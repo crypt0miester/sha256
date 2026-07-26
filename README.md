@@ -87,7 +87,11 @@ Full numbers, per-hardware analysis, and methodology live in
 `benches/wasm/README.md`. The workload throughout is one Solana erasure
 batch of Merkle leaves (64 leaves, ~1 KB each, 67,680 bytes), measured
 against agave's current `sha2` path and Firedancer's batch kernels built
-from source on the same machine. Summarised:
+from source on the same machine.
+
+![Batch SHA-256 throughput per core, MB/s: tape leads Firedancer on Zen 5 (5336 vs 4643), Zen 4 (3242 vs 3006) and Zen 3 (3264 vs 1476), sits level on Intel Granite Rapids (3923 vs 4006), and is the only batch kernel on Apple silicon at 4166; the serial sha2 baseline runs 610 to 1858](charts/speedup.svg)
+
+Summarised:
 
 | hardware | best backend | vs `sha2` | vs Firedancer |
 |---|---|---|---|
