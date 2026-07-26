@@ -33,8 +33,8 @@ on one thread. **2.87x over the serial baseline and ~15% faster than
 Firedancer.** Enabled on AMD family 0x1a only: the two waves keep ~48
 vectors live against 32 registers, and whether the hidden latency outpays
 the spill traffic is a per-microarchitecture verdict — measured neutral
-on Zen 4 (see that section), and deliberately unmeasured on Intel, which
-keeps the single wave.
+on Zen 4, and on Intel it wins the cycles but loses the clock to the
+AVX-512 licence. Both keep the single wave; see those sections.
 
 That is 5.05 M hashes/sec for ~1 KB messages, or **86 M SHA-256 block
 compressions/sec** on one core. The block figure is the one worth
@@ -87,6 +87,10 @@ and dispatch picks `shani-x4`.
 
 **Intel Emerald Rapids (Xeon Platinum 8581C, GCP c4):**
 
+First, the original run, kept because the correction below is the point. It
+came from an earlier session on a c4 instance clocking about 15% lower than the
+one used for everything after it, so compare its ratios and not its absolutes:
+
 ```
 sha2 (serial, current)          49.18 us/batch       1376 MB/s
 tape shani (x4 stream)          41.04 us/batch       1649 MB/s
@@ -95,12 +99,6 @@ firedancer avx (8 lane)         29.20 us/batch       2318 MB/s
 firedancer avx512 (16 lane)     21.82 us/batch       3102 MB/s
 ```
 
-**Firedancer is 12% faster on Intel**, and we do not yet know why. The round
-body is at the ISA floor on both implementations, and the uop cache, compiler
-tuning (`-march`), and driver-seam explanations have each been tested and
-ruled out. The same gap appears on Granite Rapids (Xeon 6985P-C: ours 17.79,
-Firedancer 16.03), so it is Intel-wide rather than one part. On AMD the same
-two kernels tie.
 
 SHA-NI interlacing is also much weaker on Intel, 1.19x over the serial
 baseline versus 1.84x on Zen 5, which matches Intel not executing
@@ -124,6 +122,55 @@ dead space at the tail of each shred's signature field
 writable dead space in front of the payload; that is a generality
 difference in the API, not a performance edge, and no number is claimed
 for it.
+
+**Intel Granite Rapids (Xeon 6985P-C, GCP c4-standard-8-lssd):**
+
+```
+sha2 (serial, current)          36.87 us/batch       1835 MB/s
+tape serial (1 lane)           167.08 us/batch        405 MB/s
+tape portable (8 lane)         308.31 us/batch        220 MB/s
+tape shani (x4 stream)          29.20 us/batch       2318 MB/s
+tape smt pair (2x avx512)       17.35 us/batch       3900 MB/s
+tape avx2 (8 lane)              44.11 us/batch       1534 MB/s
+tape avx512 (16 lane)           17.25 us/batch       3923 MB/s
+tape avx512 (2x16 interlace)    17.52 us/batch       3864 MB/s
+firedancer avx (8 lane)         22.56 us/batch       2999 MB/s
+firedancer avx512 (16 lane)     16.89 us/batch       4006 MB/s
+```
+
+2.14x over the serial baseline, best of six invocations. Unlike the c4
+instance behind the Emerald Rapids numbers, this box is quiet: most rows
+repeat to under 1% and the wall clock is usable here. Cycles anyway, six
+paired rounds:
+
+```
+                     cyc/block-step   instr/block-step    IPC     GHz
+tape avx512-16                 1048               2234   2.13    4.12
+tape avx512-2x16               1004               2483   2.47    3.68
+firedancer avx512              1034               2247   2.17    4.12
+```
+
+**Firedancer is 1.3% ahead on cycles, winning all six rounds at 0.3-0.4%
+spread, not the 11% previously recorded on this part.** Wall clock puts it at
+2.2%. Granite Rapids therefore behaves like Emerald Rapids, and the gap is a
+percent or two Intel-wide rather than double digits.
+
+One honest loose end. The earlier 11% came from a run with Firedancer at
+16.03 us, about 6% faster than any build produced here. Its kernel was given
+gcc 12.2 and gcc 14.2, and `-march=icelake-server` and `-march=graniterapids`,
+and lands at 1034 to 1042 cycles per block step in every combination, on this
+part and on Emerald Rapids alike. So the build is at least self-consistent,
+but the older figure is not reproduced and its provenance is unknown. Compiler
+tuning is dead as an explanation for the gap on both parts.
+
+The 2x16 interlace again wins the cycles, 1004 against Firedancer's 1034, and
+again cannot spend them: its clock averages 3.68 GHz against the single wave's
+4.12, and it ends up 1.6% behind in wall time. Treat that margin loosely. This
+kernel is the volatile one everywhere it has been measured, spreading 7% on
+cycles and 3.7% within a single bench run, and its clock figure is a mean over
+those noisy rounds rather than a stable operating point. What is solid is the
+direction, and it is the same on both Intel parts: ahead on cycles, behind on
+the clock, so dispatch keeps the single wave.
 
 **AArch64 (Apple M-series):**
 
@@ -225,7 +272,7 @@ kernel to route to.
 | AMD Zen 5 | `avx512-2x16` | 2.9x | **~15% faster** |
 | AMD Zen 4 | `shani-x4` | 2.1x | **~8% faster** |
 | AMD Zen 3 | `shani-x4` | 2.1x | **~2.2x faster** |
-| Intel EMR / GNR | `avx512-16` | 2.0x | 11-12% slower |
+| Intel EMR / GNR | `avx512-16` | 2.0-2.1x | ~1% slower (cycles) |
 | AArch64 | `neon-sha2-x4` | 6.8x | no comparison |
 
 In agave integration measurements, switching shred recovery's leaf hashing

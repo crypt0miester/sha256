@@ -2,7 +2,7 @@
 
 use {
     crate::{
-        batch::{Message, Shape, BLOCK},
+        batch::{stage_prefix_block, Message, Shape, BLOCK},
         core::{H0, K},
     },
     std::arch::aarch64::*,
@@ -162,6 +162,7 @@ unsafe fn hash_uniform_group(msgs: &[Message<'_>], out: &mut [[u8; 32]], blocks:
         *b = m.body.as_ptr();
     }
 
+    let staged0 = stage_prefix_block(msgs, &shape, &mut staging);
     for k in 0..blocks {
         if shape.same && k >= shape.k_lo && k < shape.k_hi {
             let off = k * BLOCK - shape.plen;
@@ -169,6 +170,10 @@ unsafe fn hash_uniform_group(msgs: &[Message<'_>], out: &mut [[u8; 32]], blocks:
                 // SAFETY: the interior bound documented on `Shape`; bodies
                 // stay borrowed for the whole call.
                 *slot = load_msg(std::slice::from_raw_parts(base.add(off), BLOCK));
+            }
+        } else if k == 0 && staged0 {
+            for (slot, s) in msg.iter_mut().zip(staging.iter()) {
+                *slot = load_msg(s);
             }
         } else {
             // Stage first so the loads below are all independent.

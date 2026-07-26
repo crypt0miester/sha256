@@ -96,6 +96,7 @@ impl<'a> Message<'a> {
         let start = k * BLOCK;
         let len = self.len();
         let plen = self.prefix.len();
+        
         out.fill(0);
 
         if start < plen {
@@ -151,7 +152,7 @@ impl<'a> Message<'a> {
 pub(crate) struct Shape {
     pub(crate) same: bool,
     pub(crate) plen: usize,
-    /// First and one-past-last block wholly inside `body`
+    pub(crate) same_prefix: bool,
     pub(crate) k_lo: usize,
     pub(crate) k_hi: usize,
 }
@@ -160,19 +161,49 @@ impl Shape {
     /// Computes the shared shape; `msgs` must be non-empty
     #[inline(always)]
     pub(crate) fn of(msgs: &[Message<'_>]) -> Shape {
-        let plen = msgs[0].prefix.len();
+        let p0 = msgs[0].prefix;
+        let plen = p0.len();
         let blen = msgs[0].body.len();
         let len = msgs[0].len();
-        let same = msgs
-            .iter()
-            .all(|m| m.prefix.len() == plen && m.body.len() == blen && m.len() == len);
+        let mut same = true;
+        let mut same_prefix = true;
+        for m in msgs {
+            same &= m.prefix.len() == plen && m.body.len() == blen && m.len() == len;
+            same_prefix &= m.prefix == p0;
+        }
         Shape {
             same,
             plen,
+            same_prefix,
             k_lo: plen.div_ceil(BLOCK),
             k_hi: (plen + blen) / BLOCK,
         }
     }
+}
+
+/// Stages the prefix-straddling block for every lane from one template.
+#[inline]
+pub(crate) fn stage_prefix_block(
+    msgs: &[Message<'_>],
+    shape: &Shape,
+    staging: &mut [[u8; BLOCK]],
+) -> bool {
+    let plen = shape.plen;
+    if !shape.same_prefix || !(1..BLOCK).contains(&plen) {
+        return false;
+    }
+    let bn = BLOCK - plen;
+    
+    if !msgs.iter().all(|m| m.body.len() >= bn) {
+        return false;
+    }
+    let mut tmpl = [0u8; BLOCK];
+    tmpl[..plen].copy_from_slice(&msgs[0].prefix[..plen]);
+    for (s, m) in staging.iter_mut().zip(msgs) {
+        *s = tmpl;
+        s[plen..].copy_from_slice(&m.body[..bn]);
+    }
+    true
 }
 
 #[inline]
@@ -222,6 +253,7 @@ pub(crate) fn hash_lanes<L: Lanes>(msgs: &[Message<'_>], out: &mut [[u8; 32]]) {
     let mut interior = [false; MAX_LANES];
 
     let mut srcs: [*const u8; MAX_LANES] = [std::ptr::null(); MAX_LANES];
+    let staged0 = stage_prefix_block(msgs, &shape, &mut blocks);
     for k in 0..max_blocks {
         // Pre-filled then overwritten.
         if shape.same {
@@ -232,8 +264,10 @@ pub(crate) fn hash_lanes<L: Lanes>(msgs: &[Message<'_>], out: &mut [[u8; 32]]) {
                     *s = unsafe { base.add(off) };
                 }
             } else {
-                for (lane, m) in msgs.iter().enumerate() {
-                    m.fill_block(k, &mut blocks[lane]);
+                if !(k == 0 && staged0) {
+                    for (lane, m) in msgs.iter().enumerate() {
+                        m.fill_block(k, &mut blocks[lane]);
+                    }
                 }
                 for (lane, b) in blocks.iter().enumerate().take(n) {
                     srcs[lane] = b.as_ptr();
@@ -241,14 +275,20 @@ pub(crate) fn hash_lanes<L: Lanes>(msgs: &[Message<'_>], out: &mut [[u8; 32]]) {
             }
         } else {
             // Stage only blocks straddling the prefix, terminator, or length.
-            for (lane, m) in msgs.iter().enumerate() {
-                let idx = k.min(nblocks[lane] - 1);
-                kk[lane] = idx;
-                let is_interior = m.block_is_interior(idx);
-                interior[lane] = is_interior;
-                if !is_interior && staged[lane] != idx {
-                    m.fill_block(idx, &mut blocks[lane]);
-                    staged[lane] = idx;
+            if k == 0 && staged0 {
+                kk[..n].fill(0);
+                interior[..n].fill(false);
+                staged[..n].fill(0);
+            } else {
+                for (lane, m) in msgs.iter().enumerate() {
+                    let idx = k.min(nblocks[lane] - 1);
+                    kk[lane] = idx;
+                    let is_interior = m.block_is_interior(idx);
+                    interior[lane] = is_interior;
+                    if !is_interior && staged[lane] != idx {
+                        m.fill_block(idx, &mut blocks[lane]);
+                        staged[lane] = idx;
+                    }
                 }
             }
             // Separate pass so the staging array is borrowed immutably here.

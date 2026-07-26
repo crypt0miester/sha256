@@ -94,7 +94,7 @@ from source on the same machine. Summarised:
 | AMD Zen 5 | `avx512-2x16` | 2.9x | **~15% faster** |
 | AMD Zen 4 | `shani-x4` | 2.1x | **~8% faster** |
 | AMD Zen 3 | `shani-x4` | 2.1x | **~2.2x faster** |
-| Intel EMR / GNR | `avx512-16` | 2.0x | 11-12% slower |
+| Intel EMR / GNR | `avx512-16` | 2.0-2.1x | ~1% slower (cycles) |
 | AArch64 | `neon-sha2-x4` | 6.8x | no comparison |
 
 The per-family AMD dispatch is measurement, not theory: the 2x16

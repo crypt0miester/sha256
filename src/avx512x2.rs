@@ -12,7 +12,7 @@
 
 use crate::{
     avx512::Avx512,
-    batch::{write_digest, Message, Shape, BLOCK, MAX_LANES},
+    batch::{stage_prefix_block, write_digest, Message, Shape, BLOCK, MAX_LANES},
     core::{big_sigma0, big_sigma1, small_sigma0, small_sigma1, H0, K},
     lanes::Lanes,
 };
@@ -156,12 +156,17 @@ unsafe fn fused(msgs: &[Message<'_>], out: &mut [[u8; 32]], blocks: usize) {
     let mut staging = [[0u8; BLOCK]; WIDTH];
     let mut srcs = [std::ptr::null::<u8>(); WIDTH];
 
+    let staged0 = stage_prefix_block(msgs, &shape, &mut staging);
     for k in 0..blocks {
         if shape.same && k >= shape.k_lo && k < shape.k_hi {
             let off = k * BLOCK - shape.plen;
             for (s, b) in srcs.iter_mut().zip(bases.iter()) {
                 // SAFETY: the interior bound documented on `Shape`.
                 *s = b.add(off);
+            }
+        } else if k == 0 && staged0 {
+            for (s, b) in srcs.iter_mut().zip(staging.iter()) {
+                *s = b.as_ptr();
             }
         } else {
             for (lane, m) in msgs.iter().enumerate() {
