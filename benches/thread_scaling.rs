@@ -34,7 +34,11 @@ const LEAVES: usize = DATA_SHREDS + CODE_SHREDS;
 fn batch(seed: u8) -> Vec<Vec<u8>> {
     (0..LEAVES)
         .map(|i| {
-            let len = if i < DATA_SHREDS { DATA_LEAF } else { CODE_LEAF };
+            let len = if i < DATA_SHREDS {
+                DATA_LEAF
+            } else {
+                CODE_LEAF
+            };
             (0..len)
                 .map(|j| (j as u8) ^ (i as u8).wrapping_mul(31) ^ seed)
                 .collect()
@@ -191,7 +195,11 @@ fn main() {
         use tape_sha256::backends;
         if is_x86_feature_detected!("avx512f") && is_x86_feature_detected!("avx512bw") {
             let kernels: [(&str, Kernel, usize); 2] = [
-                ("avx512-2x16", |m, o| unsafe { backends::avx512_16x2(m, o) }, 32),
+                (
+                    "avx512-2x16",
+                    |m, o| unsafe { backends::avx512_16x2(m, o) },
+                    32,
+                ),
                 ("shani-x4", |m, o| unsafe { backends::shani_x4(m, o) }, 4),
             ];
             println!("\nkernel choice under load (aggregate MB/s):");
@@ -213,8 +221,8 @@ fn main() {
                 rows.push(row);
             }
             print!("  {:<14}", "ratio");
-            for i in 0..max_threads {
-                print!("{:>10.2}", rows[0][i] / rows[1][i]);
+            for (avx, shani) in rows[0].iter().zip(&rows[1]) {
+                print!("{:>10.2}", avx / shani);
             }
             println!("\n  (ratio > 1 means avx512-2x16 still wins at that occupancy)");
         }
