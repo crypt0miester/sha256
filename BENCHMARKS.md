@@ -16,29 +16,47 @@ sessions on cloud hardware, so only same-session pairs are meaningful.
 **AMD Zen 5 (EPYC 9B45, GCP c4d):**
 
 ```
-sha2 (serial, current)          36.43 us/batch       1858 MB/s
-tape shani (x4 stream)          19.82 us/batch       3414 MB/s
-tape avx512 (16 lane)           14.36 us/batch       4638 MB/s
-tape avx512 (2x16 interlace)    12.68 us/batch       5336 MB/s
-firedancer avx (8 lane)         28.77 us/batch       2352 MB/s
-firedancer avx512 (16 lane)     14.55 us/batch       4643 MB/s
+sha2 (serial, current)          36.40 us/batch       1860 MB/s
+tape shani (x4 stream)          19.38 us/batch       3493 MB/s
+tape avx512 (16 lane)           14.10 us/batch       4799 MB/s
+tape avx512 (2x16 interlace)    10.60 us/batch       6384 MB/s
+firedancer avx (8 lane)         28.85 us/batch       2346 MB/s
+firedancer avx512 (16 lane)     14.78 us/batch       4578 MB/s
 ```
 
-Single-wave is kernel-for-kernel parity with Firedancer (14.36 vs 14.55,
-spreads ~1%). The dispatched kernel is the `avx512-2x16` interlace: two
-16-lane compressions with their rounds interlaced in one thread, filling
-the dependency stalls a single wave leaves idle — the in-thread form of
-the SMT observation below, and it beats the two-thread SMT pair (14.41)
-on one thread. **2.87x over the serial baseline and ~15% faster than
-Firedancer.** Enabled on AMD family 0x1a only: the two waves keep ~48
-vectors live against 32 registers, and whether the hidden latency outpays
-the spill traffic is a per-microarchitecture verdict — measured neutral
-on Zen 4, and on Intel it wins the cycles but loses the clock to the
-AVX-512 licence. Both keep the single wave; see those sections.
+Best of six invocations, rustc 1.97.1, Firedancer built on the same box
+with GCC 15.3 (`linux_gcc_zen5`). These supersede an earlier set that had
+the interlace at 12.68 us: the single wave and the SHA-NI streams barely
+moved between the two, so the difference is the interlace specifically,
+and the newer toolchain is the likeliest cause.
 
-That is 5.05 M hashes/sec for ~1 KB messages, or **86 M SHA-256 block
-compressions/sec** on one core. The block figure is the one worth
+Single-wave now leads Firedancer by ~5% (14.10 vs 14.78) rather than
+sitting at parity. The dispatched kernel is the `avx512-2x16` interlace:
+two 16-lane compressions with their rounds interlaced in one thread,
+filling the dependency stalls a single wave leaves idle. **3.43x over the
+serial baseline and ~39% faster than Firedancer** — though this kernel is
+the volatile one everywhere it has been measured, spreading 10.6 to 11.6
+us across invocations here, so read the margin as 34-39% and the table
+row as its best case. Enabled on AMD family 0x1a only: the two waves keep
+~48 vectors live against 32 registers, and whether the hidden latency
+outpays the spill traffic is a per-microarchitecture verdict — measured
+neutral on Zen 4, and on Intel it wins the cycles but loses the clock to
+the AVX-512 licence. Both keep the single wave; see those sections.
+
+That is 6.04 M hashes/sec for ~1 KB messages, or **103 M SHA-256 block
+compressions/sec** on one core (every message here pads to 17 blocks, so
+a batch is 1,088 block compressions). The block figure is the one worth
 quoting, since hashes/sec depends entirely on message length.
+
+The interlace does **not** beat a correctly pinned SMT pair: two threads
+on the siblings of one core hash the same batch in 9.53 us against the
+interlace's 10.79 in that same session. An earlier note here claimed the
+opposite on the strength of a 14.41 us SMT figure, which is what the
+`smt pair` row reports when `taskset` confines both threads to one
+logical CPU — reproduced exactly, at 14.39 us, before the pinning was
+fixed. The interlace's value is that it captures most of the SMT gain
+without needing an idle sibling, which a loaded validator does not have;
+it is not a win over two real threads.
 
 **AMD Zen 4 (EPYC 9B14, GCP c3d):**
 
@@ -192,7 +210,7 @@ pair per row, each measured same-session against its own single-thread
 number:
 
 ```
-AMD Zen 5        9.83 vs 14.93 us    1.52x
+AMD Zen 5         9.53 vs 14.15 us    1.48x
 AMD Zen 4       20.16 vs 23.66 us    1.17x
 Intel EMR       20.77 vs 23.88 us    1.15x
 ```
@@ -269,7 +287,7 @@ kernel to route to.
 
 | hardware | best backend | vs `sha2` | vs Firedancer |
 |---|---|---|---|
-| AMD Zen 5 | `avx512-2x16` | 2.9x | **~15% faster** |
+| AMD Zen 5 | `avx512-2x16` | 3.4x | **~34-39% faster** |
 | AMD Zen 4 | `shani-x4` | 2.1x | **~8% faster** |
 | AMD Zen 3 | `shani-x4` | 2.1x | **~2.2x faster** |
 | Intel EMR / GNR | `avx512-16` | 2.0-2.1x | ~1% slower (cycles) |
