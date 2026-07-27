@@ -1,5 +1,10 @@
 # tape-sha256
 
+[![Crates.io](https://img.shields.io/crates/v/tape-sha256.svg)](https://crates.io/crates/tape-sha256)
+[![Documentation](https://docs.rs/tape-sha256/badge.svg)](https://docs.rs/tape-sha256)
+[![License](https://img.shields.io/crates/l/tape-sha256.svg)](LICENSE)
+
+
 Pure-Rust, SIMD-accelerated **multi-buffer SHA-256**: hash many independent
 messages at once, one message per SIMD lane.
 
