@@ -290,6 +290,16 @@ fn main() {
         None
     };
 
+    #[cfg(all(target_arch = "x86_64", not(feature = "scalar")))]
+    let _avx512x2_sched = if has_avx512 {
+        Some(bench("tape avx512 (2x16 sched-mem)", total_bytes, || {
+            unsafe { backends::avx512_16x2_sched(&msgs, &mut out) };
+            std::hint::black_box(&out);
+        }))
+    } else {
+        None
+    };
+
     // Firedancer takes one contiguous (data, sz) per message, so the prefix
     // must be concatenated up front. That copy is hoisted out of the timed
     // region, so this measures its kernel and not memcpy. Our crate avoids the

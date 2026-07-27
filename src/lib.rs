@@ -365,6 +365,22 @@ pub mod backends {
         drive(crate::avx512x2::WIDTH, crate::avx512x2::group2, msgs, out)
     }
 
+    /// The 2x16 interlace with both schedules staged through stack buffers
+    /// instead of contending for the 32 ZMM registers
+    ///
+    /// # Safety
+    ///
+    /// The running CPU must support AVX-512F and AVX-512BW.
+    #[cfg(all(target_arch = "x86_64", not(feature = "scalar")))]
+    pub unsafe fn avx512_16x2_sched(msgs: &[Message<'_>], out: &mut [[u8; 32]]) {
+        drive(
+            crate::avx512x2::WIDTH,
+            crate::avx512x2::group2_sched,
+            msgs,
+            out,
+        )
+    }
+
     /// # Safety
     ///
     /// The running CPU must support AVX-512F and AVX-512BW.

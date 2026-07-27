@@ -244,6 +244,10 @@ fn backends_agree() {
                 let mut got = vec![[0u8; 32]; bodies.len()];
                 unsafe { backends::avx512_16x2(&msgs, &mut got) };
                 assert_eq!(got, want, "avx512_16x2 vs serial, lens {window:?}");
+
+                let mut got = vec![[0u8; 32]; bodies.len()];
+                unsafe { backends::avx512_16x2_sched(&msgs, &mut got) };
+                assert_eq!(got, want, "avx512_16x2_sched vs serial, lens {window:?}");
             }
         }
     }
@@ -347,6 +351,9 @@ fn avx512_two_wave_full_group() {
             let mut got = vec![[0u8; 32]; count];
             unsafe { backends::avx512_16x2(&msgs, &mut got) };
             assert_eq!(got, want, "two-wave len {len} count {count}");
+            let mut got = vec![[0u8; 32]; count];
+            unsafe { backends::avx512_16x2_sched(&msgs, &mut got) };
+            assert_eq!(got, want, "two-wave sched len {len} count {count}");
         }
     }
 }
