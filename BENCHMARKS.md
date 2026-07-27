@@ -16,41 +16,50 @@ sessions on cloud hardware, so only same-session pairs are meaningful.
 **AMD Zen 5 (EPYC 9B45, GCP c4d):**
 
 ```
-sha2 (serial, current)          36.40 us/batch       1860 MB/s
-tape shani (x4 stream)          19.38 us/batch       3493 MB/s
-tape avx512 (16 lane)           14.10 us/batch       4799 MB/s
-tape avx512 (2x16 interlace)    10.60 us/batch       6384 MB/s
+sha2 (serial, current)          36.32 us/batch       1863 MB/s
+tape shani (x4 stream)          19.37 us/batch       3494 MB/s
+tape avx512 (16 lane)           14.01 us/batch       4831 MB/s
+tape avx512 (2x16 interlace)    10.17 us/batch       6654 MB/s
 firedancer avx (8 lane)         28.85 us/batch       2346 MB/s
 firedancer avx512 (16 lane)     14.78 us/batch       4578 MB/s
 ```
 
-Best of six invocations, rustc 1.97.1, Firedancer built on the same box
-with GCC 15.3 (`linux_gcc_zen5`). These supersede an earlier set that had
-the interlace at 12.68 us: the single wave and the SHA-NI streams barely
-moved between the two, so the difference is the interlace specifically,
-and the newer toolchain is the likeliest cause.
+Best of six invocations, rustc 1.97.1. The tape rows are a fresh session;
+the Firedancer rows carry over from the previous one on this same part
+(GCC 15.3, `linux_gcc_zen5`), which the tape rows reproduce to within
+0.6%, so the pairing still holds.
 
-Single-wave now leads Firedancer by ~5% (14.10 vs 14.78) rather than
-sitting at parity. The dispatched kernel is the `avx512-2x16` interlace:
-two 16-lane compressions with their rounds interlaced in one thread,
-filling the dependency stalls a single wave leaves idle. **3.43x over the
-serial baseline and ~39% faster than Firedancer** — though this kernel is
-the volatile one everywhere it has been measured, spreading 10.6 to 11.6
-us across invocations here, so read the margin as 34-39% and the table
-row as its best case. Enabled on AMD family 0x1a only: the two waves keep
-~48 vectors live against 32 registers, and whether the hidden latency
-outpays the spill traffic is a per-microarchitecture verdict — measured
-neutral on Zen 4, and on Intel it wins the cycles but loses the clock to
-the AVX-512 licence. Both keep the single wave; see those sections.
+The dispatched kernel is the `avx512-2x16` interlace: two 16-lane
+compressions with their rounds interlaced in one thread, filling the
+dependency stalls a single wave leaves idle. **3.57x over the serial
+baseline, 38% over the single wave, and ~45% faster than Firedancer** —
+though this stays the volatile row, spanning 10.17 to 11.68 across
+invocations, so read the Firedancer margin as 27-45% and the table as its
+best case. Enabled on AMD family 0x1a only: measured neutral on Zen 4,
+and on Intel it wins the cycles but loses the clock to the AVX-512
+licence. Both keep the single wave; see those sections.
 
-That is 6.04 M hashes/sec for ~1 KB messages, or **103 M SHA-256 block
+Rounds 16..64 are rolled rather than fully unrolled, which is a
+measurement-integrity matter rather than a style one. Fully unrolled the
+kernel body is 30,748 bytes against Zen 5's 32 KB 8-way L1 instruction
+cache — roughly 7.5 of 8 ways per set, so whether it fits is decided by
+where the linker happens to put it. In that state this row moved between
+18.15 and 11.31 us purely from 35 KB of unrelated code elsewhere in the
+crate, with the hot loop byte-identical and the spill counts equal; the
+same source built with `-Cllvm-args=-align-all-functions=9` went from
+18.14 to 11.2. Rolling brings the body to 22,333 bytes, and the cliff
+goes away. Anything that grows this kernel should re-check that number.
+
+That is 6.29 M hashes/sec for ~1 KB messages, or **107 M SHA-256 block
 compressions/sec** on one core (every message here pads to 17 blocks, so
 a batch is 1,088 block compressions). The block figure is the one worth
 quoting, since hashes/sec depends entirely on message length.
 
 The interlace does **not** beat a correctly pinned SMT pair: two threads
 on the siblings of one core hash the same batch in 9.53 us against the
-interlace's 10.79 in that same session. An earlier note here claimed the
+interlace's 10.79 in that same session — that pairing predates the roll
+above, which has since brought the interlace to 10.17, so the gap is
+narrower now but has not closed. An earlier note here claimed the
 opposite on the strength of a 14.41 us SMT figure, which is what the
 `smt pair` row reports when `taskset` confines both threads to one
 logical CPU — reproduced exactly, at 14.39 us, before the pinning was
@@ -86,6 +95,13 @@ double-pumps 512-bit ops through a 256-bit datapath, so a single wave
 already saturates the pipes and leaves no stalls for the second wave to
 fill — the same reason its SMT gain is only 1.17x. Dispatch keeps
 `shani-x4` on Zen 4.
+
+Rolling the interlace's rounds, which is worth 40% on Zen 5 by getting the
+kernel back inside the L1 instruction cache, was tried here and is worth
+1.3% (22.10 -> 21.82 best of four, against `shani-x4` at 20.66 in the same
+session). Zen 4 has the same 32 KB L1I, so it sat on the same cliff, but
+fetch was never its limit — the pipes were. This is measured, not assumed;
+do not re-run it.
 
 **AMD Zen 3 (EPYC 7B13, GCP c2d):**
 
@@ -186,7 +202,17 @@ again cannot spend them: its clock averages 3.68 GHz against the single wave's
 4.12, and it ends up 1.6% behind in wall time. Treat that margin loosely. This
 kernel is the volatile one everywhere it has been measured, spreading 7% on
 cycles and 3.7% within a single bench run, and its clock figure is a mean over
-those noisy rounds rather than a stable operating point. What is solid is the
+those noisy rounds rather than a stable operating point.
+
+A later session put a number on that volatility and it is worse than the
+within-run spread suggests: across ten invocations on Granite Rapids the
+interlace ranged 17.61 to 20.15 us (14%), against the single wave's 3.7%,
+and the spread is bimodal rather than noisy — each process sits in one mode
+or the other, and disabling ASLR collapses it to a single tight cluster. The
+cause is per-process memory layout and is not understood; it is not the 4 KB
+schedule stride, which was ruled out by padding. Nothing rides on it while
+Intel dispatches the single wave, but it does mean the best-of-six figures
+above flatter the interlace on this part, and a median would serve better. What is solid is the
 direction, and it is the same on both Intel parts: ahead on cycles, behind on
 the clock, so dispatch keeps the single wave.
 
@@ -235,6 +261,29 @@ candidates/s in a Chrome tab, 3.7x the web3.js stack and 1.6x `hash-wasm`.
 PDA derivation is bound by the ed25519 curve check (94-99% of the cost), so
 no SHA-256 implementation moves it. Numbers, methodology, and the full
 where-it-wins/where-it-loses map are in `benches/wasm/README.md`.
+
+**The no-SIMD fallback width is per-architecture**, because multi-buffer in
+scalar code costs a real general-purpose register per lane rather than
+riding along free in a vector lane. Measured across widths on one erasure
+batch:
+
+```
+                        x86-64 (Zen 4)   aarch64 (Apple M)
+tape serial (1 lane)        218.30 us          106.5 us
+tape portable (2 lane)      368.66 us              -
+tape portable (4 lane)      365.01 us              -
+tape portable (8 lane)      418.78 us           93.7 us
+```
+
+x86-64 has 16 GPRs and cannot absorb even two lanes: the state alone is 16
+live words at N=2, so it spills before the extra independent chains buy
+anything, and every width loses to plain serial. aarch64 has 31 and eight
+lanes come out 13% ahead. Dispatch falls back to `portable-8` on aarch64 and
+`portable-1` everywhere else: one lane is the safe default, giving up ~13%
+where the registers exist against the 1.9x the wide kernel loses where they
+do not, and aarch64 is named because it was measured rather than because it
+is 64-bit. `portable8` stays exported as the differential-test reference
+regardless of which one dispatches.
 
 ## tape blob commitments
 
@@ -287,7 +336,7 @@ kernel to route to.
 
 | hardware | best backend | vs `sha2` | vs Firedancer |
 |---|---|---|---|
-| AMD Zen 5 | `avx512-2x16` | 3.4x | **~34-39% faster** |
+| AMD Zen 5 | `avx512-2x16` | 3.6x | **~27-45% faster** |
 | AMD Zen 4 | `shani-x4` | 2.1x | **~8% faster** |
 | AMD Zen 3 | `shani-x4` | 2.1x | **~2.2x faster** |
 | Intel EMR / GNR | `avx512-16` | 2.0-2.1x | ~1% slower (cycles) |

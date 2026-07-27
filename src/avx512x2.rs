@@ -29,9 +29,10 @@ const _: () = assert!(WIDTH <= crate::batch::MAX_WIDTH);
 /// Same structure as `core::compress`, twice over: the round and schedule
 /// macros are restated because they capture the local working variables,
 /// but the sigma arithmetic is shared with the single-wave core. The A/B
-/// alternation is textual so the scheduler sees both chains at once, and
-/// `rounds16x2` expands flat for the same reason `core`'s `rounds16` does:
-/// literal indices keep both schedule windows in registers.
+/// alternation is textual so the scheduler sees both chains at once. Each
+/// `rounds16x2` expansion is flat for the same reason `core`'s `rounds16` is:
+/// literal indices keep both schedule windows in registers. Its four
+/// invocations are not — see the loop at the end of this function.
 #[inline(always)]
 fn compress2<L: Lanes>(sa: &mut [L; 8], sb: &mut [L; 8], mut wa: [L; 16], mut wb: [L; 16]) {
     let [mut a0, mut b0, mut c0, mut d0, mut e0, mut f0, mut g0, mut h0] = *sa;
@@ -69,46 +70,51 @@ fn compress2<L: Lanes>(sa: &mut [L; 8], sb: &mut [L; 8], mut wa: [L; 16], mut wb
     // exists to show.
     #[rustfmt::skip]
     macro_rules! rounds16x2 {
-        ($base:expr, $sched:ident) => {
-            round!(a0,b0,c0,d0,e0,f0,g0,h0, $sched!(wa, 0), K[$base + 0]);
-            round!(a1,b1,c1,d1,e1,f1,g1,h1, $sched!(wb, 0), K[$base + 0]);
-            round!(h0,a0,b0,c0,d0,e0,f0,g0, $sched!(wa, 1), K[$base + 1]);
-            round!(h1,a1,b1,c1,d1,e1,f1,g1, $sched!(wb, 1), K[$base + 1]);
-            round!(g0,h0,a0,b0,c0,d0,e0,f0, $sched!(wa, 2), K[$base + 2]);
-            round!(g1,h1,a1,b1,c1,d1,e1,f1, $sched!(wb, 2), K[$base + 2]);
-            round!(f0,g0,h0,a0,b0,c0,d0,e0, $sched!(wa, 3), K[$base + 3]);
-            round!(f1,g1,h1,a1,b1,c1,d1,e1, $sched!(wb, 3), K[$base + 3]);
-            round!(e0,f0,g0,h0,a0,b0,c0,d0, $sched!(wa, 4), K[$base + 4]);
-            round!(e1,f1,g1,h1,a1,b1,c1,d1, $sched!(wb, 4), K[$base + 4]);
-            round!(d0,e0,f0,g0,h0,a0,b0,c0, $sched!(wa, 5), K[$base + 5]);
-            round!(d1,e1,f1,g1,h1,a1,b1,c1, $sched!(wb, 5), K[$base + 5]);
-            round!(c0,d0,e0,f0,g0,h0,a0,b0, $sched!(wa, 6), K[$base + 6]);
-            round!(c1,d1,e1,f1,g1,h1,a1,b1, $sched!(wb, 6), K[$base + 6]);
-            round!(b0,c0,d0,e0,f0,g0,h0,a0, $sched!(wa, 7), K[$base + 7]);
-            round!(b1,c1,d1,e1,f1,g1,h1,a1, $sched!(wb, 7), K[$base + 7]);
-            round!(a0,b0,c0,d0,e0,f0,g0,h0, $sched!(wa, 8), K[$base + 8]);
-            round!(a1,b1,c1,d1,e1,f1,g1,h1, $sched!(wb, 8), K[$base + 8]);
-            round!(h0,a0,b0,c0,d0,e0,f0,g0, $sched!(wa, 9), K[$base + 9]);
-            round!(h1,a1,b1,c1,d1,e1,f1,g1, $sched!(wb, 9), K[$base + 9]);
-            round!(g0,h0,a0,b0,c0,d0,e0,f0, $sched!(wa, 10), K[$base + 10]);
-            round!(g1,h1,a1,b1,c1,d1,e1,f1, $sched!(wb, 10), K[$base + 10]);
-            round!(f0,g0,h0,a0,b0,c0,d0,e0, $sched!(wa, 11), K[$base + 11]);
-            round!(f1,g1,h1,a1,b1,c1,d1,e1, $sched!(wb, 11), K[$base + 11]);
-            round!(e0,f0,g0,h0,a0,b0,c0,d0, $sched!(wa, 12), K[$base + 12]);
-            round!(e1,f1,g1,h1,a1,b1,c1,d1, $sched!(wb, 12), K[$base + 12]);
-            round!(d0,e0,f0,g0,h0,a0,b0,c0, $sched!(wa, 13), K[$base + 13]);
-            round!(d1,e1,f1,g1,h1,a1,b1,c1, $sched!(wb, 13), K[$base + 13]);
-            round!(c0,d0,e0,f0,g0,h0,a0,b0, $sched!(wa, 14), K[$base + 14]);
-            round!(c1,d1,e1,f1,g1,h1,a1,b1, $sched!(wb, 14), K[$base + 14]);
-            round!(b0,c0,d0,e0,f0,g0,h0,a0, $sched!(wa, 15), K[$base + 15]);
-            round!(b1,c1,d1,e1,f1,g1,h1,a1, $sched!(wb, 15), K[$base + 15]);
+        ($k:expr, $sched:ident) => {
+            round!(a0,b0,c0,d0,e0,f0,g0,h0, $sched!(wa, 0), $k[0]);
+            round!(a1,b1,c1,d1,e1,f1,g1,h1, $sched!(wb, 0), $k[0]);
+            round!(h0,a0,b0,c0,d0,e0,f0,g0, $sched!(wa, 1), $k[1]);
+            round!(h1,a1,b1,c1,d1,e1,f1,g1, $sched!(wb, 1), $k[1]);
+            round!(g0,h0,a0,b0,c0,d0,e0,f0, $sched!(wa, 2), $k[2]);
+            round!(g1,h1,a1,b1,c1,d1,e1,f1, $sched!(wb, 2), $k[2]);
+            round!(f0,g0,h0,a0,b0,c0,d0,e0, $sched!(wa, 3), $k[3]);
+            round!(f1,g1,h1,a1,b1,c1,d1,e1, $sched!(wb, 3), $k[3]);
+            round!(e0,f0,g0,h0,a0,b0,c0,d0, $sched!(wa, 4), $k[4]);
+            round!(e1,f1,g1,h1,a1,b1,c1,d1, $sched!(wb, 4), $k[4]);
+            round!(d0,e0,f0,g0,h0,a0,b0,c0, $sched!(wa, 5), $k[5]);
+            round!(d1,e1,f1,g1,h1,a1,b1,c1, $sched!(wb, 5), $k[5]);
+            round!(c0,d0,e0,f0,g0,h0,a0,b0, $sched!(wa, 6), $k[6]);
+            round!(c1,d1,e1,f1,g1,h1,a1,b1, $sched!(wb, 6), $k[6]);
+            round!(b0,c0,d0,e0,f0,g0,h0,a0, $sched!(wa, 7), $k[7]);
+            round!(b1,c1,d1,e1,f1,g1,h1,a1, $sched!(wb, 7), $k[7]);
+            round!(a0,b0,c0,d0,e0,f0,g0,h0, $sched!(wa, 8), $k[8]);
+            round!(a1,b1,c1,d1,e1,f1,g1,h1, $sched!(wb, 8), $k[8]);
+            round!(h0,a0,b0,c0,d0,e0,f0,g0, $sched!(wa, 9), $k[9]);
+            round!(h1,a1,b1,c1,d1,e1,f1,g1, $sched!(wb, 9), $k[9]);
+            round!(g0,h0,a0,b0,c0,d0,e0,f0, $sched!(wa, 10), $k[10]);
+            round!(g1,h1,a1,b1,c1,d1,e1,f1, $sched!(wb, 10), $k[10]);
+            round!(f0,g0,h0,a0,b0,c0,d0,e0, $sched!(wa, 11), $k[11]);
+            round!(f1,g1,h1,a1,b1,c1,d1,e1, $sched!(wb, 11), $k[11]);
+            round!(e0,f0,g0,h0,a0,b0,c0,d0, $sched!(wa, 12), $k[12]);
+            round!(e1,f1,g1,h1,a1,b1,c1,d1, $sched!(wb, 12), $k[12]);
+            round!(d0,e0,f0,g0,h0,a0,b0,c0, $sched!(wa, 13), $k[13]);
+            round!(d1,e1,f1,g1,h1,a1,b1,c1, $sched!(wb, 13), $k[13]);
+            round!(c0,d0,e0,f0,g0,h0,a0,b0, $sched!(wa, 14), $k[14]);
+            round!(c1,d1,e1,f1,g1,h1,a1,b1, $sched!(wb, 14), $k[14]);
+            round!(b0,c0,d0,e0,f0,g0,h0,a0, $sched!(wa, 15), $k[15]);
+            round!(b1,c1,d1,e1,f1,g1,h1,a1, $sched!(wb, 15), $k[15]);
         };
     }
 
-    rounds16x2!(0, direct);
-    rounds16x2!(16, extend);
-    rounds16x2!(32, extend);
-    rounds16x2!(48, extend);
+    // Rounds 16..64 roll instead of unrolling: 16 rounds is two full
+    // rotations of a0..h0, so every pass re-enters with the same naming.
+    // Fully unrolled the body is ~30 KB against a 32 KB L1I, close enough
+    // to the edge that unrelated code shifting its alignment costs 60%.
+    let (kc, _) = K.as_chunks::<16>();
+    rounds16x2!(kc[0], direct);
+    for k in &kc[1..] {
+        rounds16x2!(k, extend);
+    }
 
     sa[0] = sa[0].add(a0);
     sa[1] = sa[1].add(b0);

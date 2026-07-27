@@ -69,7 +69,8 @@ gracefully:
 | `neon-sha2-x4` | AArch64 with the SHA-256 crypto extension | 4 streams |
 | `neon-4` | other AArch64 | 4 |
 | `simd128-4` | wasm32 built with `-C target-feature=+simd128` | 4 |
-| `portable-8` | everything else | 8 |
+| `portable-8` | other AArch64 without SIMD (`scalar` builds) | 8 |
+| `portable-1` | everything else | 1 |
 
 All SIMD backends share one compression function written against a lane
 trait; a backend only supplies the word arithmetic (e.g. `vpternlogd` for the
@@ -89,20 +90,20 @@ batch of Merkle leaves (64 leaves, ~1 KB each, 67,680 bytes), measured
 against agave's current `sha2` path and Firedancer's batch kernels built
 from source on the same machine.
 
-![Batch SHA-256 throughput per core, MB/s: tape leads Firedancer on Zen 5 (6384 vs 4578), Zen 4 (3242 vs 3006) and Zen 3 (3264 vs 1476), sits level on Intel Granite Rapids (3923 vs 4006), and is the only batch kernel on Apple silicon at 4166; the serial sha2 baseline runs 610 to 1860](charts/speedup.svg)
+![Batch SHA-256 throughput per core, MB/s: tape leads Firedancer on Zen 5 (6654 vs 4578), Zen 4 (3242 vs 3006) and Zen 3 (3264 vs 1476), sits level on Intel Granite Rapids (3923 vs 4006), and is the only batch kernel on Apple silicon at 4166; the serial sha2 baseline runs 610 to 1863](charts/speedup.svg)
 
 Summarised:
 
 | hardware | best backend | vs `sha2` | vs Firedancer |
 |---|---|---|---|
-| AMD Zen 5 | `avx512-2x16` | 3.4x | **~34-39% faster** |
+| AMD Zen 5 | `avx512-2x16` | 3.6x | **~27-45% faster** |
 | AMD Zen 4 | `shani-x4` | 2.1x | **~8% faster** |
 | AMD Zen 3 | `shani-x4` | 2.1x | **~2.2x faster** |
 | Intel EMR / GNR | `avx512-16` | 2.0-2.1x | ~1% slower (cycles) |
 | AArch64 | `neon-sha2-x4` | 6.8x | no comparison |
 
 The per-family AMD dispatch is measurement, not theory: the 2x16
-interlace wins 33% over the single wave on Zen 5's native 512-bit
+interlace wins 38% over the single wave on Zen 5's native 512-bit
 datapath, measures exactly neutral on double-pumped Zen 4 (where the
 interlaced SHA-NI streams beat every 16-lane kernel instead), and is
 deliberately not enabled anywhere it has not been benched.
@@ -117,7 +118,7 @@ In agave:
   1.55x over its 7-thread rayon pool on one thread
 - shred verify: **1.40x** the whole receive path (Zen 5); the Merkle
   rebuild in it is 54% of the cost and batches 2.13x
-- leaf hashing: 2.0-3.4x on x86, 6.8x on ARM; interior joins 2.13x
+- leaf hashing: 2.0-3.6x on x86, 6.8x on ARM; interior joins 2.13x
 
 In tape:
 

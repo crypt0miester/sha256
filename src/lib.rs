@@ -174,24 +174,24 @@ pub fn hash_messages(msgs: &[Message<'_>], out: &mut [[u8; 32]]) {
 /// Not stable API; callers should use hash_many and let dispatch pick. Each
 /// dispatchable backend has two entry points: one taking pre-built messages,
 /// and a `_slices` form that builds them on the stack so the wrappers need no
-/// allocation. `serial` is a measurement baseline, never dispatched to, so it
-/// has no `_slices` twin.
+/// allocation. Both `serial` and `portable8` are dispatchable — which one the
+/// no-SIMD fallback picks is per-architecture, see `dispatch::PORTABLE`.
 #[doc(hidden)]
 pub mod backends {
     use super::*;
 
     // Concrete scalar group functions; see GroupFn for why kernels are
     // instantiated once here and called through pointers.
-    fn scalar1(msgs: &[Message<'_>], out: &mut [[u8; 32]]) {
+    pub(crate) fn scalar1(msgs: &[Message<'_>], out: &mut [[u8; 32]]) {
         batch::hash_lanes::<Scalar<1>>(msgs, out)
     }
-    fn scalar8(msgs: &[Message<'_>], out: &mut [[u8; 32]]) {
+    pub(crate) fn scalar8(msgs: &[Message<'_>], out: &mut [[u8; 32]]) {
         batch::hash_lanes::<Scalar<8>>(msgs, out)
     }
     /// Portable 8-lane kernel
     ///
-    /// Always available, and the reference every SIMD backend is checked
-    /// against.
+    /// The reference every SIMD backend is checked against, and the no-SIMD
+    /// fallback on register-rich targets.
     pub fn portable8(msgs: &[Message<'_>], out: &mut [[u8; 32]]) {
         unsafe { drive(8, scalar8, msgs, out) }
     }
@@ -206,6 +206,10 @@ pub mod backends {
     /// baseline speedups are quoted against.
     pub fn serial(msgs: &[Message<'_>], out: &mut [[u8; 32]]) {
         unsafe { drive(1, scalar1, msgs, out) }
+    }
+
+    pub fn serial_slices(prefix: &[u8], bodies: &[&[u8]], out: &mut [[u8; 32]]) {
+        unsafe { drive_slices(1, scalar1, prefix, bodies, out) }
     }
 
     /// 4-lane AArch64 NEON kernel
@@ -383,9 +387,29 @@ pub mod backends {
 mod dispatch {
     use super::*;
 
-    fn portable8_group(msgs: &[Message<'_>], out: &mut [[u8; 32]]) {
-        batch::hash_lanes::<Scalar<8>>(msgs, out)
-    }
+    /// The kernel to fall back on where no SIMD exists
+    ///
+    /// Multi-buffer costs a real general-purpose register per lane in scalar
+    /// code rather than riding along free in a vector lane, so the width that
+    /// wins is set by the register file. x86-64 has 16 GPRs and cannot absorb
+    /// even two lanes: eight measured 1.9x slower than one on Zen 4 (418.78 vs
+    /// 218.30 us). aarch64 has 31, and eight lanes measure 13% faster than one
+    /// (93.7 vs 106.5).
+    ///
+    /// One lane is the default because it is the safe side of that trade: it
+    /// gives up ~13% where the registers exist, while the wide kernel loses
+    /// 1.9x where they do not, and most targets are nearer x86-64 than aarch64
+    /// (32-bit x86 has 8 GPRs; wasm is JIT-ed onto whatever the host has).
+    /// aarch64 is listed because it was measured, not because it is 64-bit.
+    ///
+    /// Unreachable on an aarch64 build without `scalar`, since NEON is
+    /// baseline there and nothing falls through to it.
+    #[allow(dead_code)]
+    const PORTABLE: Kernel = if cfg!(target_arch = "aarch64") {
+        Kernel::Portable8
+    } else {
+        Kernel::Portable1
+    };
 
     /// Which kernel this build and CPU resolve to
     ///
@@ -398,6 +422,7 @@ mod dispatch {
     #[allow(dead_code)]
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub(crate) enum Kernel {
+        Portable1,
         Portable8,
         #[cfg(all(target_arch = "aarch64", not(feature = "scalar")))]
         Neon4,
@@ -422,6 +447,7 @@ mod dispatch {
     impl Kernel {
         pub(crate) fn name(self) -> &'static str {
             match self {
+                Kernel::Portable1 => "portable-1",
                 Kernel::Portable8 => "portable-8",
                 #[cfg(all(target_arch = "aarch64", not(feature = "scalar")))]
                 Kernel::Neon4 => "neon-4",
@@ -446,6 +472,7 @@ mod dispatch {
 
         pub(crate) fn width(self) -> usize {
             match self {
+                Kernel::Portable1 => 1,
                 Kernel::Portable8 => 8,
                 #[cfg(all(target_arch = "aarch64", not(feature = "scalar")))]
                 Kernel::Neon4 => 4,
@@ -506,7 +533,7 @@ mod dispatch {
     #[allow(clippy::needless_return)]
     pub(crate) fn select() -> Kernel {
         #[cfg(feature = "scalar")]
-        return Kernel::Portable8;
+        return PORTABLE;
 
         #[cfg(all(target_arch = "x86_64", feature = "avx512", not(feature = "scalar")))]
         return Kernel::Avx512_16;
@@ -564,7 +591,7 @@ mod dispatch {
                     if is_x86_feature_detected!("avx2") {
                         return Kernel::Avx2_8;
                     }
-                    Kernel::Portable8
+                    PORTABLE
                 });
             }
             #[cfg(target_arch = "aarch64")]
@@ -585,7 +612,7 @@ mod dispatch {
                 }
                 #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
                 {
-                    Kernel::Portable8
+                    PORTABLE
                 }
             }
         }
@@ -593,6 +620,7 @@ mod dispatch {
 
     pub(crate) fn hash(msgs: &[Message<'_>], out: &mut [[u8; 32]]) {
         match select() {
+            Kernel::Portable1 => backends::serial(msgs, out),
             Kernel::Portable8 => backends::portable8(msgs, out),
             #[cfg(all(target_arch = "aarch64", not(feature = "scalar")))]
             Kernel::Neon4 => backends::neon4(msgs, out),
@@ -669,6 +697,7 @@ mod dispatch {
 
     pub(crate) fn hash_slices(prefix: &[u8], bodies: &[&[u8]], out: &mut [[u8; 32]]) {
         match select() {
+            Kernel::Portable1 => backends::serial_slices(prefix, bodies, out),
             Kernel::Portable8 => backends::portable8_slices(prefix, bodies, out),
             #[cfg(all(target_arch = "aarch64", not(feature = "scalar")))]
             Kernel::Neon4 => backends::neon4_slices(prefix, bodies, out),
@@ -702,8 +731,11 @@ mod dispatch {
         let k = select();
         let width = k.width();
         match k {
+            Kernel::Portable1 => unsafe {
+                drive_pairs(width, backends::scalar1, prefix, left, right, out)
+            },
             Kernel::Portable8 => unsafe {
-                drive_pairs(width, portable8_group, prefix, left, right, out)
+                drive_pairs(width, backends::scalar8, prefix, left, right, out)
             },
             #[cfg(all(target_arch = "aarch64", not(feature = "scalar")))]
             Kernel::Neon4 => unsafe {
