@@ -121,11 +121,11 @@ workload throughout is one Solana erasure batch of Merkle leaves (64 leaves,
 ~1 KB each, 67,680 bytes), measured against the serial `sha2` path and against
 Firedancer's batch kernels built from source on the same machine.
 
-![Batch SHA-256 throughput per core, MB/s: tape leads Firedancer on Zen 5 (6654 vs 4578), Zen 4 (3242 vs 3006) and Zen 3 (3264 vs 1476), sits level on Intel Granite Rapids (3923 vs 4006), and is the only batch kernel on Apple silicon at 4166; the serial sha2 baseline runs 610 to 1863](charts/speedup.svg)
+![Batch SHA-256 throughput per core, MB/s: tape leads Firedancer on Zen 5 (8654 vs 5393), Zen 4 (3242 vs 3006) and Zen 3 (3264 vs 1476), sits level on Intel Granite Rapids (3923 vs 4006), and is the only batch kernel on Apple silicon at 4166; the serial sha2 baseline runs 610 to 2443](charts/speedup.svg)
 
 | hardware | best backend | vs `sha2` | vs Firedancer |
 |---|---|---|---|
-| AMD Zen 5 | `avx512-2x16` | 3.6x | **~27-45% faster** |
+| AMD Zen 5 | `avx512-2x16` | 3.5x | **60% faster** |
 | AMD Zen 4 | `shani-x4` | 2.1x | **~8% faster** |
 | AMD Zen 3 | `shani-x4` | 2.1x | **~2.2x faster** |
 | Intel EMR / GNR | `avx512-16` | 2.0-2.1x | ~1% slower (cycles) |
@@ -134,7 +134,8 @@ Firedancer's batch kernels built from source on the same machine.
 The per-family AMD dispatch is measurement, not theory: the 2x16 interlace
 wins 38% over the single wave on Zen 5's native 512-bit datapath, measures
 exactly neutral on double-pumped Zen 4, and is deliberately not enabled
-anywhere it has not been benched.
+anywhere it has not been benched. The Zen 5 column is one pinned invocation so
+every bar shares a run; three reps put the interlace at 7.82-8.34 us/batch.
 
 Integrated into agave, per core against the serial `sha2` path it uses today:
 shred recovery is **14-21% faster end to end**, and 1.55x over its 7-thread
